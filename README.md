@@ -1,18 +1,7 @@
 # Python Weather Backend
 
-This is the backend API for a weather web application.  
-It provides real-time and forecast weather data through a RESTful API built with **Python** and **FastAPI**.
-
-Frontend (Angular/Next.js) developed by [Radu Padurariu](https://github.com/RaduPadurariu/team-project-weather-app).
-
----
-
-## Features
-- Current weather by city name or coordinates  
-- 5-day forecast endpoint  
-- Temperature, humidity, wind, and conditions  
-- SON responses, ready for frontend integration  
-- Easy deploy on [Render](https://render.com)
+Backend API for a weather web application, providing real-time weather and 5-day forecasts.  
+Frontend built with Angular/Next.js by [Radu Padurariu](https://github.com/RaduPadurariu/team-project-weather-app).
 
 ---
 
@@ -21,13 +10,33 @@ Frontend (Angular/Next.js) developed by [Radu Padurariu](https://github.com/Radu
 - **Framework:** FastAPI  
 - **Data Source:** OpenWeatherMap API  
 - **Hosting:** Render  
-- **Environment:** `.env` for API keys and config
+- **Environment:** `.env` for API keys
 
 ---
 
-## Setup
+## Features
+- Current weather by city or coordinates  
+- 5-day forecast  
+- Temperature, humidity, wind, and weather conditions  
+- JSON responses for frontend integration
 
-### Clone the repo
+---
+
+## Quick Setup
 ```bash
-git clone https://github.com/USERNAME/python-weather-backend.git
+# Clone repo
+git clone https://github.com/YOUR_USERNAME/python-weather-backend.git
 cd python-weather-backend
+
+# Create & activate virtual environment
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Add your OpenWeather API key
+echo "API_KEY=your_openweather_api_key" > .env
+
+# Run server
+uvicorn main:app --reload
