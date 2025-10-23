@@ -8,7 +8,7 @@ Frontend built with Angular/Next.js by [Radu Padurariu](https://github.com/RaduP
 ## Tech Stack
 - **Language:** Python 3.x  
 - **Framework:** FastAPI  
-- **Data Source:** OpenWeatherMap API  
+- **Data Source:** WeatherAPI  
 - **Hosting:** Render  
 - **Environment:** `.env` for API keys
 
