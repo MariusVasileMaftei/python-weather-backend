@@ -42,9 +42,20 @@ source .venv/bin/activate
 # -------------------------------
 # Windows (PowerShell in VS Code)
 # -------------------------------
-# 1. Allow running local scripts (do once)
+
+# 1. Allow running local scripts (only once)
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-# 2. Activate virtual environment
+
+# 2. If you are already inside a venv and get activation errors
+deactivate
+
+# 3. (Optional) Delete existing venv if broken
+rmdir .venv /s /q
+
+# 4. Create new virtual environment
+python -m venv .venv
+
+# 5. Activate virtual environment
 .venv\Scripts\Activate.ps1
 
 # Install dependencies
@@ -56,3 +67,4 @@ pip install -r requirements.txt
 
 # Run server
 uvicorn main:app --reload
+
