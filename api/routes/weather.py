@@ -1,151 +1,115 @@
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
 import requests
 from core.config import config
-from cachetools import TTLCache, cached
+from cachetools import TTLCache
 
 router = APIRouter()
 
-# Cache: max 100 items, each valid for 10 minutes
+# Simple cache so we don’t hit WeatherAPI with the same request over and over.
+# 10 min TTL seems fine for weather data.
 weather_cache = TTLCache(maxsize=100, ttl=600)
 
-# -----------------------------------
-# Function to get weather by city
-# -----------------------------------
-@cached(weather_cache)
-def fetch_weather(city: str,
-                  days: int = 1,
-                  aqi: str = "yes",
-                  alerts: str = "yes",
-                  pollen: str = "yes",
-                  current_fields: str = "temp_c,wind_mph",
-                  wind100kph: str = "yes"):
-    """Get weather data from WeatherAPI and cache it"""
+# -------------------------------
+# Function that calls WeatherAPI using any type of query
+# -------------------------------
+def fetch_weather_by_q(q: str, days: int = 1):
+    """
+    This handles all WeatherAPI query formats (city, coords, zip, iata, etc.).
+    Keeping cache per (query, days) because people might request different durations.
+    """
+    cache_key = (q.lower(), days)
+    if cache_key in weather_cache:
+        return weather_cache[cache_key]
+
     url = f"{config.WEATHER_BASE_URL}/forecast.json"
     params = {
         "key": config.WEATHER_API_KEY,
-        "q": city,
+        "q": q,
         "days": days,
-        "aqi": aqi,
-        "alerts": alerts,
-        "pollen": pollen,
-        "current_fields": current_fields,
-        "wind100kph": wind100kph
+        "aqi": "yes",    # keeping AQI enabled so we have complete data
+        "alerts": "yes"  # same for weather alerts
     }
 
     response = requests.get(url, params=params)
     if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail="Error fetching data from WeatherAPI")
-    return response.json()
+        # Just forward the WeatherAPI error so we can see exactly what they return
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"WeatherAPI Error {response.status_code}: {response.text}"
+        )
+
+    data = response.json()
+    weather_cache[cache_key] = data
+    return data
 
 
-# -----------------------------------
-# Function to get weather by coordinates
-# -----------------------------------
-@cached(weather_cache)
-def fetch_weather_by_coords(lat: float,
-                            lon: float,
-                            days: int = 1,
-                            aqi: str = "yes",
-                            alerts: str = "yes",
-                            pollen: str = "yes",
-                            current_fields: str = "temp_c,wind_mph",
-                            wind100kph: str = "yes"):
-    """Get weather data from WeatherAPI by latitude and longitude"""
+# -------------------------------
+# Function specifically for numeric coords
+# -------------------------------
+def fetch_weather_by_coords(lat: float, lon: float):
+    """
+    Same logic as above but meant for direct float coords.
+    Rounding for the cache key just avoids treating tiny float differences
+    as completely different locations.
+    """
+    cache_key = (round(lat, 4), round(lon, 4))
+    if cache_key in weather_cache:
+        return weather_cache[cache_key]
+
     url = f"{config.WEATHER_BASE_URL}/forecast.json"
     params = {
         "key": config.WEATHER_API_KEY,
         "q": f"{lat},{lon}",
-        "days": days,
-        "aqi": aqi,
-        "alerts": alerts,
-        "pollen": pollen,
-        "current_fields": current_fields,
-        "wind100kph": wind100kph
+        "days": 1,
+        "aqi": "yes",
+        "alerts": "yes"
     }
 
     response = requests.get(url, params=params)
     if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail="Error fetching data from WeatherAPI")
-    return response.json()
+        # Again, forwarding the real API error so it’s easier to debug
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"WeatherAPI Error {response.status_code}: {response.text}"
+        )
+
+    data = response.json()
+    weather_cache[cache_key] = data
+    return data
 
 
-# -----------------------------------
-# Endpoint to get weather by city
-# -----------------------------------
-@router.get("/weather/{city}")
-def get_weather(city: str,
-                days: int = Query(1, ge=1, le=10),
-                aqi: str = Query("yes"),
-                alerts: str = Query("yes"),
-                pollen: str = Query("yes"),
-                current_fields: str = Query("temp_c,wind_mph"),
-                wind100kph: str = Query("yes")):
-    """Return current weather and forecast for a city"""
-    data = fetch_weather(city, days, aqi, alerts, pollen, current_fields, wind100kph)
-    
-    current = data.get("current", {})
-    forecast_day = data.get("forecast", {}).get("forecastday", [{}])[0]
-
-    pollen_data = forecast_day.get("day", {}).get("pollen") if "day" in forecast_day else None
-
-    return {
-        "city": data.get("location", {}).get("name"),
-        "country": data.get("location", {}).get("country"),
-        "temperature_C": current.get("temp_c"),
-        "conditions": current.get("condition", {}).get("text"),
-        "wind_kph": current.get("wind_kph"),
-        "wind_mph": current.get("wind_mph"),
-        "pollen": pollen_data,
-        "forecast_days": [
-            {
-                "date": d.get("date"),
-                "max_temp_C": d.get("day", {}).get("maxtemp_c"),
-                "min_temp_C": d.get("day", {}).get("mintemp_c"),
-                "conditions": d.get("day", {}).get("condition", {}).get("text")
-            }
-            for d in data.get("forecast", {}).get("forecastday", [])
-        ]
-    }
+# -------------------------------
+# Main universal endpoint
+# -------------------------------
+@router.get("/weather")
+def get_weather(
+    q: str = Query(..., description="WeatherAPI query: city name, 'lat,lon', zip, iata, auto:ip, etc."),
+    days: int = Query(1, ge=1, le=10)
+):
+    """
+    This endpoint is basically a wrapper so the client can send
+    any valid WeatherAPI query string without us enforcing the format.
+    """
+    return fetch_weather_by_q(q, days)
 
 
-# -----------------------------------
-# Endpoint to get weather by coordinates (changed to GET)
-# -----------------------------------
+# -------------------------------
+# Separate endpoint just for Swagger (coords)
+# -------------------------------
 @router.get("/weather/coords")
 def get_weather_by_coords(
-    lat: float = Query(..., ge=-90, le=90, description="Latitude"),
-    lon: float = Query(..., ge=-180, le=180, description="Longitude"),
-    days: int = Query(1, ge=1, le=10, description="Number of forecast days"),
-    aqi: str = Query("yes", description="Include air quality"),
-    alerts: str = Query("yes", description="Include weather alerts"),
-    pollen: str = Query("yes", description="Include pollen data"),
-    current_fields: str = Query("temp_c,wind_mph", description="Current weather fields"),
-    wind100kph: str = Query("yes", description="Include wind speed in kph")
+    coords: str = Query(..., description="Coordinates as 'lat,lon', e.g., '44.4328,26.1043'")
 ):
-    """Return current weather and forecast for given coordinates"""
-    data = fetch_weather_by_coords(lat, lon, days, aqi, alerts, pollen, current_fields, wind100kph)
-    
-    current = data.get("current", {})
-    forecast_day = data.get("forecast", {}).get("forecastday", [{}])[0]
+    """
+    Swagger handles a single string input much nicer than two separate numeric fields,
+    so this endpoint exists mainly for easier testing. We parse the string manually.
+    """
+    try:
+        lat_str, lon_str = coords.split(",")
+        lat = float(lat_str.strip())
+        lon = float(lon_str.strip())
+    except ValueError:
+        # In case someone enters something like "bla bla", give them a clear error
+        raise HTTPException(status_code=400, detail="Invalid coordinates format. Use 'lat,lon'.")
 
-    pollen_data = forecast_day.get("day", {}).get("pollen") if "day" in forecast_day else None
-
-    return {
-        "city": data.get("location", {}).get("name"),
-        "country": data.get("location", {}).get("country"),
-        "temperature_C": current.get("temp_c"),
-        "conditions": current.get("condition", {}).get("text"),
-        "wind_kph": current.get("wind_kph"),
-        "wind_mph": current.get("wind_mph"),
-        "pollen": pollen_data,
-        "forecast_days": [
-            {
-                "date": d.get("date"),
-                "max_temp_C": d.get("day", {}).get("maxtemp_c"),
-                "min_temp_C": d.get("day", {}).get("mintemp_c"),
-                "conditions": d.get("day", {}).get("condition", {}).get("text")
-            }
-            for d in data.get("forecast", {}).get("forecastday", [])
-        ]
-    }
+    return fetch_weather_by_coords(lat, lon)
