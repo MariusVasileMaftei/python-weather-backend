@@ -31,6 +31,9 @@ Frontend built with Angular/Next.js by [Radu Padurariu](https://github.com/RaduP
 git clone https://github.com/YOUR_USERNAME/python-weather-backend.git
 cd python-weather-backend
 
+# Upgrade pip to avoid dependency or installation issues
+pip install --upgrade pip
+
 # Create virtual environment
 python -m venv .venv
 
