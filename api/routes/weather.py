@@ -5,17 +5,32 @@ from cachetools import TTLCache
 
 router = APIRouter()
 
-# Simple cache so we don’t hit WeatherAPI with the same request over and over.
-# 10 min TTL seems fine for weather data.
+# --------------------------------------------------------------
+# In-memory TTL cache for WeatherAPI responses.
+# - Prevents repeated calls for the same location.
+# - TTL = 10 minutes (reasonable for weather data).
+# - maxsize = 100 entries.
+# --------------------------------------------------------------
 weather_cache = TTLCache(maxsize=100, ttl=600)
 
-# -------------------------------
-# Function that calls WeatherAPI using any type of query
-# -------------------------------
+
+# --------------------------------------------------------------
+# Fetch weather using WeatherAPI's flexible "q" parameter.
+# Accepts:
+#   - City name (e.g., "London")
+#   - Coordinates (e.g., "44.43,26.10")
+#   - ZIP code
+#   - Airport IATA
+#   - auto:ip
+#
+# This function:
+#   - Uses caching to reduce API calls.
+#   - Forwards WeatherAPI errors to the client.
+# --------------------------------------------------------------
 def fetch_weather_by_q(q: str, days: int = 1):
     """
-    This handles all WeatherAPI query formats (city, coords, zip, iata, etc.).
-    Keeping cache per (query, days) because people might request different durations.
+    Calls WeatherAPI using arbitrary query formats (q parameter).
+    Caches results for (query, days).
     """
     cache_key = (q.lower(), days)
     if cache_key in weather_cache:
@@ -26,13 +41,14 @@ def fetch_weather_by_q(q: str, days: int = 1):
         "key": config.WEATHER_API_KEY,
         "q": q,
         "days": days,
-        "aqi": "yes",    # keeping AQI enabled so we have complete data
-        "alerts": "yes"  # same for weather alerts
+        "aqi": "yes",     # Include Air Quality Index for richer data.
+        "alerts": "yes"   # Include weather alerts.
     }
 
     response = requests.get(url, params=params)
+
     if response.status_code != 200:
-        # Just forward the WeatherAPI error so we can see exactly what they return
+        # Pass through WeatherAPI error response for debugging transparency.
         raise HTTPException(
             status_code=response.status_code,
             detail=f"WeatherAPI Error {response.status_code}: {response.text}"
@@ -43,14 +59,17 @@ def fetch_weather_by_q(q: str, days: int = 1):
     return data
 
 
-# -------------------------------
-# Function specifically for numeric coords
-# -------------------------------
+# --------------------------------------------------------------
+# Fetch weather using explicit latitude and longitude values.
+# This version:
+#   - Rounds lat/lon to 4 decimals to prevent caching identical
+#     points with tiny float differences.
+#   - Returns the raw WeatherAPI structure.
+# --------------------------------------------------------------
 def fetch_weather_by_coords(lat: float, lon: float):
     """
-    Same logic as above but meant for direct float coords.
-    Rounding for the cache key just avoids treating tiny float differences
-    as completely different locations.
+    Calls WeatherAPI using numeric coordinates.
+    Caches results by rounded float coordinates.
     """
     cache_key = (round(lat, 4), round(lon, 4))
     if cache_key in weather_cache:
@@ -66,8 +85,8 @@ def fetch_weather_by_coords(lat: float, lon: float):
     }
 
     response = requests.get(url, params=params)
+
     if response.status_code != 200:
-        # Again, forwarding the real API error so it’s easier to debug
         raise HTTPException(
             status_code=response.status_code,
             detail=f"WeatherAPI Error {response.status_code}: {response.text}"
@@ -78,38 +97,74 @@ def fetch_weather_by_coords(lat: float, lon: float):
     return data
 
 
-# -------------------------------
-# Main universal endpoint
-# -------------------------------
+# --------------------------------------------------------------
+# MAIN WEATHER ENDPOINT (Simplified version)
+#
+# Returns only the essential fields:
+#   - city, country
+#   - lat, lon
+#   - temperature in C
+#   - humidity
+#   - wind speed (kph)
+#   - weather condition text
+#
+# This keeps responses lightweight and easy for frontend use.
+# --------------------------------------------------------------
 @router.get("/weather")
-def get_weather(
-    q: str = Query(..., description="WeatherAPI query: city name, 'lat,lon', zip, iata, auto:ip, etc."),
-    days: int = Query(1, ge=1, le=10)
+def get_simple_weather(
+    q: str = Query(..., description="City name, 'lat,lon', zip, iata, etc.")
 ):
     """
-    This endpoint is basically a wrapper so the client can send
-    any valid WeatherAPI query string without us enforcing the format.
+    Fetches weather using a flexible query and returns a simplified
+    subset of the WeatherAPI response, focusing on core metrics.
     """
-    return fetch_weather_by_q(q, days)
+    data = fetch_weather_by_q(q)
+
+    try:
+        location = data["location"]
+        current = data["current"]
+
+        simplified = {
+            "city": location.get("name"),
+            "country": location.get("country"),
+            "lat": location.get("lat"),
+            "lon": location.get("lon"),
+            "temperature_C": current.get("temp_c"),
+            "humidity": current.get("humidity"),
+            "windspeed_kph": current.get("wind_kph"),
+            "condition": current.get("condition", {}).get("text"),
+        }
+
+        return simplified
+
+    except KeyError:
+        # This should rarely happen unless WeatherAPI changes its schema.
+        raise HTTPException(status_code=500, detail="Unexpected WeatherAPI response format.")
 
 
-# -------------------------------
-# Separate endpoint just for Swagger (coords)
-# -------------------------------
+# --------------------------------------------------------------
+# OPTIONAL ENDPOINT: Fetch weather by coordinate string.
+# Useful in Swagger UI since it handles single-string params better.
+#
+# Example call:
+#     /weather/coords?coords=44.4328,26.1043
+#
+# (Currently commented out to avoid extra endpoints unless needed.)
+# --------------------------------------------------------------
+'''
 @router.get("/weather/coords")
 def get_weather_by_coords(
     coords: str = Query(..., description="Coordinates as 'lat,lon', e.g., '44.4328,26.1043'")
 ):
     """
-    Swagger handles a single string input much nicer than two separate numeric fields,
-    so this endpoint exists mainly for easier testing. We parse the string manually.
+    Parses a 'lat,lon' string and fetches weather from coordinates.
     """
     try:
         lat_str, lon_str = coords.split(",")
         lat = float(lat_str.strip())
         lon = float(lon_str.strip())
     except ValueError:
-        # In case someone enters something like "bla bla", give them a clear error
         raise HTTPException(status_code=400, detail="Invalid coordinates format. Use 'lat,lon'.")
 
     return fetch_weather_by_coords(lat, lon)
+'''

@@ -50,7 +50,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 deactivate
 
 # 3. (Optional) Delete existing venv if broken
-rmdir .venv /s /q
+rmdir .venv
 
 # 4. Create new virtual environment
 python -m venv .venv
