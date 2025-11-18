@@ -66,12 +66,12 @@ def fetch_weather_by_q(q: str, days: int = 1):
 #     points with tiny float differences.
 #   - Returns the raw WeatherAPI structure.
 # --------------------------------------------------------------
-def fetch_weather_by_coords(lat: float, lon: float):
+def fetch_weather_by_coords(lat: float, lon: float, days: int = 1):
     """
     Calls WeatherAPI using numeric coordinates.
     Caches results by rounded float coordinates.
     """
-    cache_key = (round(lat, 4), round(lon, 4))
+    cache_key = (round(lat, 4), round(lon, 4), days)
     if cache_key in weather_cache:
         return weather_cache[cache_key]
 
@@ -79,7 +79,7 @@ def fetch_weather_by_coords(lat: float, lon: float):
     params = {
         "key": config.WEATHER_API_KEY,
         "q": f"{lat},{lon}",
-        "days": 1,
+        "days": days,
         "aqi": "yes",
         "alerts": "yes"
     }
@@ -110,8 +110,8 @@ def fetch_weather_by_coords(lat: float, lon: float):
 #
 # This keeps responses lightweight and easy for frontend use.
 # --------------------------------------------------------------
-@router.get("/weather")
-def get_simple_weather(
+@router.get("/weather") # Real time weather endpoint
+def get_weather(
     q: str = Query(..., description="City name, 'lat,lon', zip, iata, etc.")
 ):
     """
@@ -129,10 +129,13 @@ def get_simple_weather(
             "country": location.get("country"),
             "lat": location.get("lat"),
             "lon": location.get("lon"),
+            "tz_id": location.get("tz_id"),
             "temperature_C": current.get("temp_c"),
             "humidity": current.get("humidity"),
             "windspeed_kph": current.get("wind_kph"),
-            "condition": current.get("condition", {}).get("text"),
+            "condition": current.get("condition", {}),
+            "pressure_mb": current.get("pressure_mb"),
+            "air_quality": current.get("air_quality", {})
         }
 
         return simplified
@@ -141,30 +144,44 @@ def get_simple_weather(
         # This should rarely happen unless WeatherAPI changes its schema.
         raise HTTPException(status_code=500, detail="Unexpected WeatherAPI response format.")
 
-
-# --------------------------------------------------------------
-# OPTIONAL ENDPOINT: Fetch weather by coordinate string.
-# Useful in Swagger UI since it handles single-string params better.
-#
-# Example call:
-#     /weather/coords?coords=44.4328,26.1043
-#
-# (Currently commented out to avoid extra endpoints unless needed.)
-# --------------------------------------------------------------
-'''
-@router.get("/weather/coords")
-def get_weather_by_coords(
-    coords: str = Query(..., description="Coordinates as 'lat,lon', e.g., '44.4328,26.1043'")
+@router.get('/weather/forecast')
+def get_weather_forecast(
+    q: str = Query(..., description="City name, 'lat,lon', zip, iata, etc."),
+    days: int = Query(1, ge=1, le=10, description="Number of forecast days (1-10)")
 ):
     """
-    Parses a 'lat,lon' string and fetches weather from coordinates.
+    Fetches weather forecast for the specified number of days
+    using a flexible query.
     """
+    data = fetch_weather_by_q(q, days)
+    
     try:
-        lat_str, lon_str = coords.split(",")
-        lat = float(lat_str.strip())
-        lon = float(lon_str.strip())
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid coordinates format. Use 'lat,lon'.")
+        location = data['location']
+        forecast_days = data.get("forecast", {}).get('forecastday', [])
+        
+        simpified_forecast = []
+        for days in forecast_days:
+            day_info = days.get('day', {})
+            simpified_forecast.append({
+                "date": days.get('date'),
+                "max_temp_C": day_info.get('maxtemp_c'),
+                "min_temp_C": day_info.get('mintemp_c'),
+                "avg_temp_C": day_info.get('avgtemp_c'),
+                "condition": day_info.get('condition', {}).get('text'),
+                "max_wind_kph": day_info.get('maxwind_kph'),
+                "total_precip_mm": day_info.get('totalprecip_mm'),
+                "avg_humidity": day_info.get('avghumidity'),
+                "condition": day_info.get('condition', {}),
+            })
+        
+        return {
+            "city": location.get("name"),
+            "country": location.get("country"),
+            "lat": location.get("lat"),
+            "lon": location.get("lon"),
+            "forecast": simpified_forecast
+        }
+    except KeyError:
+        raise HTTPException(status_code=500, detail="Unexpected WeatherAPI response format.")
+    
 
-    return fetch_weather_by_coords(lat, lon)
-'''
