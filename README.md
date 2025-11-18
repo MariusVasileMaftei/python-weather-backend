@@ -18,7 +18,7 @@ Frontend built with Angular/Next.js by [Radu Padurariu](https://github.com/RaduP
 
 ## Features
 - Current weather by city or coordinates  
-- 5-day forecast  
+- 3-day forecast  
 - Temperature, humidity, wind, and weather conditions  
 - JSON responses for frontend integration
 
